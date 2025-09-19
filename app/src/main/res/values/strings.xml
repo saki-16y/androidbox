@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">バーコード作成（GASラッパー）</string>
+    <string name="set_folder">保存先を設定</string>
+    <string name="save_dummy_pdf">ダミーPDF保存</string>
+    <string name="save_usb_from_webview">USBに保存</string>
+    <string name="share_pdf">共有</string>
+    <string name="change_folder">保存先を再設定</string>
+</resources>
