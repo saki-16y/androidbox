@@ -53,33 +53,55 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+    // ▼ここから追加：USBフォルダ選択（SAF） StartActivityForResult 版
+    private val folderPicker = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val data = result.data ?: return@registerForActivityResult
+            val uri = data.data ?: return@registerForActivityResult
 
-    // USBフォルダ選択（SAF）
-    private val pickFolder = registerForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri != null) {
-            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            // 旧URIの許可を解放（上限対策・任意）
+            // 付与された一時権限のみを AND して永続化
+            val takeFlags = (data.flags) and
+                    (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+
             val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-            val old = prefs.getString(KEY_TREE_URI, null)
-            if (!old.isNullOrEmpty()) {
-                try { contentResolver.releasePersistableUriPermission(Uri.parse(old), flags) } catch (_: Exception) {}
+            prefs.getString(KEY_TREE_URI, null)?.let { old ->
+                runCatching {
+                    contentResolver.releasePersistableUriPermission(Uri.parse(old), takeFlags)
+                }
             }
-            // 新URIを永続許可して保存
-            contentResolver.takePersistableUriPermission(uri, flags)
+            try {
+                contentResolver.takePersistableUriPermission(uri, takeFlags)
+            } catch (e: SecurityException) {
+                Toast.makeText(this, "フォルダ許可の取得に失敗しました。もう一度選択してください。", Toast.LENGTH_LONG).show()
+                return@registerForActivityResult
+            }
             prefs.edit().putString(KEY_TREE_URI, uri.toString()).apply()
             Toast.makeText(this, "保存先を設定しました", Toast.LENGTH_SHORT).show()
         }
     }
 
+    // ピッカー起動関数
+    private fun openFolderPicker() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+            )
+        }
+        folderPicker.launch(intent)
+    }
+// ▲ここまで追加
+
+// koko2
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        setupWebView(binding.webView)
-        setupButtons()
     }
     // ▼ WebView 内のJSを呼ぶユーティリティ
     private fun runJS(script: String) {
@@ -102,13 +124,12 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         // 画面離脱時にGASの状態を取り出して端末へ退避（保険）
         if (pageReady) requestSnapshotFromWebView(binding.webView) { }
-        runCatching { unregisterReceiver(btReceiver) }
-        super.onStop()
-    }
+        // koko
+        private fun setupButtons() = with(binding) {
+            btnSetFolder.setOnClickListener { openFolderPicker() }
+            btnChangeFolder.setOnClickListener { openFolderPicker() }
 
-    private fun setupButtons() = with(binding) {
-        btnSetFolder.setOnClickListener { pickFolder.launch(null) }
-        btnChangeFolder.setOnClickListener { pickFolder.launch(null) }
+        // koko
         // ▼ 端末側バー（GASは無改変）
         btnSeq.setOnClickListener {
             if (!pageReady) { Toast.makeText(this@MainActivity, "読み込み中…", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
