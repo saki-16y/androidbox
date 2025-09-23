@@ -42,13 +42,13 @@ class MainActivity : AppCompatActivity() {
                     val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
                     if (state == BluetoothAdapter.STATE_OFF) {
                         Toast.makeText(this@MainActivity, "BluetoothがOFFになりました（スナップショット保存）", Toast.LENGTH_SHORT).show()
-                        if (pageReady) requestSnapshotFromWebView(binding.webView) { }
+                        // if (pageReady) requestSnapshotFromWebView(binding.webView) { }
                     }
                 }
                 BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
                     // HID系スキャナの切断で飛んでくることが多い
                     Toast.makeText(this@MainActivity, "スキャナ切断を検知（スナップショット保存）", Toast.LENGTH_SHORT).show()
-                    if (pageReady) requestSnapshotFromWebView(binding.webView) { }
+                    // if (pageReady) requestSnapshotFromWebView(binding.webView) { }
                 }
             }
         }
@@ -123,7 +123,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         // 画面離脱時にGASの状態を取り出して端末へ退避（保険）
-        if (pageReady) requestSnapshotFromWebView(binding.webView) { }
+        super.onStop()
+        if (pageReady) requestSnapshotFromWebView(binding.webView)  }
         // koko
         private fun setupButtons() = with(binding) {
             btnSetFolder.setOnClickListener { openFolderPicker() }
@@ -131,26 +132,26 @@ class MainActivity : AppCompatActivity() {
 
         // koko
         // ▼ 端末側バー（GASは無改変）
-        btnSeq.setOnClickListener {
-            if (!pageReady) { Toast.makeText(this@MainActivity, "読み込み中…", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            binding.webView.evaluateJavascript("scanAndFill('seq')", null)
-        }
-        btnOne.setOnClickListener {
-            if (!pageReady) { Toast.makeText(this@MainActivity, "読み込み中…", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            binding.webView.evaluateJavascript("scanAndFill('one')", null)
-        }
-        btnGuide.setOnClickListener {
-            if (!pageReady) { Toast.makeText(this@MainActivity, "読み込み中…", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            binding.webView.evaluateJavascript("toggleGuide()", null)
-        }
-        btnUndo.setOnClickListener {
-            if (!pageReady) { Toast.makeText(this@MainActivity, "読み込み中…", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            binding.webView.evaluateJavascript("undo()", null)
-        }
-        btnClear.setOnClickListener {
-            if (!pageReady) { Toast.makeText(this@MainActivity, "読み込み中…", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            binding.webView.evaluateJavascript("clearAll()", null)
-        }
+        // btnSeq.setOnClickListener {
+        //     if (!pageReady) { Toast.makeText(this@MainActivity, "読み込み中…", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+        //     binding.webView.evaluateJavascript("scanAndFill('seq')", null)
+        // }
+        // btnOne.setOnClickListener {
+        //     if (!pageReady) { Toast.makeText(this@MainActivity, "読み込み中…", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+        //     binding.webView.evaluateJavascript("scanAndFill('one')", null)
+        // }
+        // btnGuide.setOnClickListener {
+        //     if (!pageReady) { Toast.makeText(this@MainActivity, "読み込み中…", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+        //     binding.webView.evaluateJavascript("toggleGuide()", null)
+        // }
+        // btnUndo.setOnClickListener {
+        //     if (!pageReady) { Toast.makeText(this@MainActivity, "読み込み中…", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+        //     binding.webView.evaluateJavascript("undo()", null)
+        // }
+        // btnClear.setOnClickListener {
+        //     if (!pageReady) { Toast.makeText(this@MainActivity, "読み込み中…", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+        //     binding.webView.evaluateJavascript("clearAll()", null)
+        // }
         // ▼ USBに保存（WebView→PDF→SAF）
         binding.btnSaveUsb.setOnClickListener {
             if (!pageReady) {
@@ -158,7 +159,7 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             // ファイル名のベースをWeb側から拾う（見つからなければ <title> → "label"）
-            fetchLabelName(binding.webView) { base ->
+            /* fetchLabelName(binding.webView) { base ->
                 val safeBase = if (base.isBlank()) "label" else base
                 val name = "${safeBase}_${timestamp()}.pdf"
                 // A4を180dpiでレンダ（画質と容量のバランス）
@@ -168,7 +169,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     Toast.makeText(this@MainActivity, "PDF化に失敗しました", Toast.LENGTH_LONG).show()
                 }
-            }
+            } */
         }
 
         // 保存先は既存のSAFを利用
@@ -254,7 +255,7 @@ class MainActivity : AppCompatActivity() {
                 textSize = 14f
                 isAntiAlias = true
             }
-            canvas.drawText("Hello PDF @ ${timestamp()}", 72f, 72f, paint)
+            // canvas.drawText("Hello PDF @ ${timestamp()}", 72f, 72f, paint)
             canvas.drawText("USB保存テスト", 72f, 100f, paint)
             pdf.finishPage(page)
 
@@ -376,6 +377,7 @@ class MainActivity : AppCompatActivity() {
         return cand
     }
 
-    private fun timestamp(): String =
-        SimpleDateFormat("yyyyMMdd_HHmmss", Locale.JAPAN).format(Date())
+    // private fun timestamp(): String =
+    //     SimpleDateFormat("yyyyMMdd_HHmmss", Locale.JAPAN).format(Date())
 }
+
