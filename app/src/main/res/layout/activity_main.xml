@@ -50,58 +50,35 @@
         android:padding="8dp"
         android:background="#EEEEEE"
         android:gravity="center"
-        android:weightSum="6">
-
-        <!-- ▼ 必要な6項目だけに差し替え -->
-        <Button
-            android:id="@+id/btnSeq"
-            android:text="読取→順送り"
-            android:layout_weight="1"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"/>
-
-        <Button
-            android:id="@+id/btnOne"
-            android:text="読取→左上1枚"
-            android:layout_weight="1"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"/>
-
-        <Button
-            android:id="@+id/btnGuide"
-            android:text="ガイド線ON/OFF"
-            android:layout_weight="1"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"/>
-
-        <Button
-            android:id="@+id/btnUndo"
-            android:text="戻す"
-            android:layout_weight="1"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"/>
-
-        <Button
-            android:id="@+id/btnClear"
-            android:text="クリア"
-            android:layout_weight="1"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"/>
-        <Button
-            android:id="@+id/btnSaveUsb"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="USBに保存" />
-
+        android:weightSum="4">
 
         <Button
             android:id="@+id/btnSetFolder"
-            android:text="保存先を設定"
+            android:text="@string/set_folder"
             android:layout_weight="1"
             android:layout_width="0dp"
             android:layout_height="wrap_content"/>
 
+        <Button
+            android:id="@+id/btnSaveDummyPdf"
+            android:text="@string/save_dummy_pdf"
+            android:layout_weight="1"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"/>
 
+        <Button
+            android:id="@+id/btnSaveUsb"
+            android:text="@string/save_usb_from_webview"
+            android:layout_weight="1"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"/>
+
+        <Button
+            android:id="@+id/btnShare"
+            android:text="@string/share_pdf"
+            android:layout_weight="1"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"/>
     </LinearLayout>
 
 </LinearLayout>
