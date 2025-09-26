@@ -7,6 +7,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.CookieManager
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -100,8 +101,11 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
-
+     // ▼ WebView初期化とボタン配線
+    setContentView(binding.root)
+    // ▼ WebView初期化とボタン配線
+    setupWebView(binding.webView)
+    setupButtons()
     }
     // ▼ WebView 内のJSを呼ぶユーティリティ
     private fun runJS(script: String) {
@@ -189,10 +193,18 @@ class MainActivity : AppCompatActivity() {
     private fun setupWebView(webView: WebView) {
         val s: WebSettings = webView.settings
         s.javaScriptEnabled = true
+        // ▼ Cookie を有効化（GASの認証/セッション維持のため）
+        CookieManager.getInstance().setAcceptCookie(true)
+        // 必要ならサードパーティCookieも許可（Googleログイン等で必要になる場合あり）
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
         s.domStorageEnabled = true
+        // ▼ WebView がフォーカスを受け取れるように（ページ側へ渡す前提）<<
+        webView.isFocusableInTouchMode = true
+        webView.requestFocus()
         s.loadsImagesAutomatically = true
         s.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-
+        // ★ C4：Mixed Content を禁止（httpをブロック：https厳格）
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         webView.webViewClient = object : WebViewClient() {
             // docs/drive/accounts は外部ブラウザで開く（任意：必要なければ削除可）
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -207,14 +219,11 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 pageReady = true
                 Toast.makeText(this@MainActivity, "GAS画面を読み込みました", Toast.LENGTH_SHORT).show()
-                // ★ 端末側にスナップショットがあり、かつ localStorage が空なら差し戻して復元
-                pushSnapshotToWebIfMissing(binding.webView)
+                 }
+             }
 
-            }
-        }
-
-        // ★ あなたのGAS WebアプリURLに差し替え（/exec）
-        webView.loadUrl("https://script.google.com/macros/s/AKfycbzaifuFk2Dyn2RXg4qe3Blfq-DbNfJ7NT1RNDb8C9duCDq6DTbAEEoIkuIdffDI-dI/exec")
+         // ★ 起動URLは strings.xml に一本化
+         webView.loadUrl(getString(R.string.gas_url))
     }
 
     // WebViewのDOMからラベル名を拾う（見つからなければ <title>、それも無ければ "label"）
