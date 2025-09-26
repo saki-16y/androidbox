@@ -5,12 +5,14 @@ import android.net.Uri
 import android.os.Bundle
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
+import android.os.Build
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.CookieManager
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.OnBackPressedCallback
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.IntentFilter
@@ -106,6 +108,18 @@ class MainActivity : AppCompatActivity() {
     // ▼ WebView初期化とボタン配線
     setupWebView(binding.webView)
     setupButtons()
+    // ▼ C6：戻るキーの履歴制御（WebView優先→無ければ通常の戻る）
+    onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            if (binding.webView.canGoBack()) {
+                binding.webView.goBack()
+                } else {
+                // 自分のコールバックを一度無効化してデフォルト動作へ
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
     }
     // ▼ WebView 内のJSを呼ぶユーティリティ
     private fun runJS(script: String) {
@@ -121,10 +135,17 @@ class MainActivity : AppCompatActivity() {
         val filter = IntentFilter().apply {
             addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
             addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
-        }
+            }
         registerReceiver(btReceiver, filter)
-    }
-
+        } // ← ここで onStart を閉じる
+        override fun onResume() {
+            super.onResume()
+            if (pageReady) {
+                binding.webView.requestFocus()
+                val jsFocus = """(function(){var el=document.querySelector('input:not([type=hidden]):not([disabled]),textarea,[contenteditable="true"],[tabindex]:not([tabindex="-1"])');if(el){el.focus();try{var v=(el.value||"");el.value="";el.value=v;}catch(e){} }})();""".trimIndent()
+                binding.webView.evaluateJavascript(jsFocus, null)
+            }
+        }
     override fun onStop() {
         // 画面離脱時にGASの状態を取り出して端末へ退避（保険）
         super.onStop()
@@ -205,20 +226,60 @@ class MainActivity : AppCompatActivity() {
         s.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         // ★ C4：Mixed Content を禁止（httpをブロック：https厳格）
         s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        // ▼ C5：不要アクセスの遮断（今回の要件で未使用な穴を閉じる）
+        s.allowFileAccess = false
+        s.allowContentAccess = false
+        s.allowFileAccessFromFileURLs = false
+        s.allowUniversalAccessFromFileURLs = false
+        s.javaScriptCanOpenWindowsAutomatically = false
+        // koko
+        s.setSupportZoom(true)
+        s.builtInZoomControls = true
+        s.displayZoomControls = false // 画面ボタンは非表示（ピンチのみ）
+        s.useWideViewPort = true // ページの幅情報を尊重
+        s.loadWithOverviewMode = true // 画面に収めて表示（ピンチ開始しやすい）
+        // koko
+        s.mediaPlaybackRequiresUserGesture = true
+        s.setGeolocationEnabled(false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            s.safeBrowsingEnabled = true
+             }
         webView.webViewClient = object : WebViewClient() {
             // docs/drive/accounts は外部ブラウザで開く（任意：必要なければ削除可）
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val u = request?.url ?: return false
                 val host = (u.host ?: return false).lowercase()
-                if (host.startsWith("docs.") || host.startsWith("drive.") || host.startsWith("accounts.")) {
+                if (host.startsWith("docs.") || host.startsWith("drive.") || host.startsWith("accounts.")
+                        || host.startsWith("support.") || host.startsWith("policies.") || host.startsWith("developers.")) {
                     startActivity(Intent(Intent.ACTION_VIEW, u))
                     return true
-                }
+                    }
                 return false
             }
             override fun onPageFinished(view: WebView?, url: String?) {
                 pageReady = true
                 Toast.makeText(this@MainActivity, "GAS画面を読み込みました", Toast.LENGTH_SHORT).show()
+// ▼ 最初の入力へ自動フォーカス（バナー等を押しても再付与）
+val jsAutoFocus = """
+(function(){
+function focusFirst(){
+var el = document.querySelector('input:not([type=hidden]):not([disabled]), textarea, [contenteditable="true"], [tabindex]:not([tabindex="-1"])');
+if(!el) return "noop";
+el.focus();
+try{ var v=(el.value||""); el.value=""; el.value=v; }catch(e){}
+return "focused";
+}
+// 初回 & 任意クリック後（入力以外を押した時のみ）
+focusFirst();
+document.addEventListener('click', function(ev){
+if(ev.target && ev.target.closest('input,textarea,[contenteditable="true"]')) return;
+setTimeout(focusFirst, 0);
+}, true);
+})();
+""".trimIndent()
+                binding.webView.evaluateJavascript(jsAutoFocus, null)
+                // ★ 端末側にスナップショットがあり、かつ localStorage が空なら差し戻して復元
+                pushSnapshotToWebIfMissing(binding.webView)
                  }
              }
 
