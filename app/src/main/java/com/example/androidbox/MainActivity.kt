@@ -7,12 +7,17 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.os.Build
 import android.webkit.WebView
+import android.net.http.SslError
+import android.webkit.SslErrorHandler
+import android.webkit.WebResourceError
+import android.webkit.WebResourceResponse
 import android.webkit.WebViewClient
 import android.webkit.CookieManager
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.OnBackPressedCallback
+import android.view.View
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.IntentFilter
@@ -30,6 +35,9 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var pageReady = false
+    // ▼ C8：インジケータの表示/非表示
+    private fun showLoading() { binding.progressBar.visibility = View.VISIBLE }
+    private fun hideLoading() { binding.progressBar.visibility = View.GONE }
 
     private val PREFS = "usb_prefs"
     private val KEY_TREE_URI = "tree_uri"
@@ -245,6 +253,13 @@ class MainActivity : AppCompatActivity() {
             s.safeBrowsingEnabled = true
              }
         webView.webViewClient = object : WebViewClient() {
+            // ▼ C8：読み込み開始でスピナーを表示
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                pageReady = false
+                showLoading()
+                super.onPageStarted(view, url, favicon)
+            }
+
             // docs/drive/accounts は外部ブラウザで開く（任意：必要なければ削除可）
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val u = request?.url ?: return false
@@ -253,36 +268,91 @@ class MainActivity : AppCompatActivity() {
                         || host.startsWith("support.") || host.startsWith("policies.") || host.startsWith("developers.")) {
                     startActivity(Intent(Intent.ACTION_VIEW, u))
                     return true
-                    }
+                     }
+// koko_v13_start
+                // ↑↑ ↑↑ ここまでが shouldOverrideUrlLoading の本体
                 return false
             }
+
+            // ▼ C7: 通信系のエラーをトーストで通知（メインフレームのみ）
+            override fun onReceivedError(
+                view: WebView,
+                // koko_0928_02
+                request: WebResourceRequest,
+            error: WebResourceError
+            ) {
+                hideLoading()
+                if (request.isForMainFrame) {
+                    Toast.makeText(
+                            this@MainActivity,
+                    "通信エラー：${error.description}",
+                    Toast.LENGTH_LONG
+                            ).show()
+                    }
+                }
+            // koko_0928_02
+            override fun onReceivedHttpError(
+                view: WebView,
+                request: WebResourceRequest,
+                response: WebResourceResponse
+            ) {
+                if (request.isForMainFrame) {
+                    val code = response.statusCode
+                    Toast.makeText(
+                        this@MainActivity,
+                        "HTTPエラー：$code",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+            @Suppress("DEPRECATION")
+            override fun onReceivedError(
+                view: WebView, errorCode: Int, description: String, failingUrl: String
+            ) {
+                    hideLoading()
+                    // 旧API用：一部端末・状況でこちらだけ発火するケースがある
+                    Toast.makeText(this@MainActivity, "通信エラー：$description", Toast.LENGTH_LONG).show()
+                    }
+            override fun onReceivedSslError(
+                view: WebView,
+                handler: SslErrorHandler,
+                error: SslError
+            ) {
+                hideLoading()
+            // セキュリティ優先：読み込みを中止して通知
+            handler.cancel()
+            Toast.makeText(this@MainActivity, "SSLエラーのため読み込みを中止しました", Toast.LENGTH_LONG).show()
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
+
+                hideLoading()
                 pageReady = true
                 Toast.makeText(this@MainActivity, "GAS画面を読み込みました", Toast.LENGTH_SHORT).show()
-// ▼ 最初の入力へ自動フォーカス（バナー等を押しても再付与）
-val jsAutoFocus = """
-(function(){
-function focusFirst(){
-var el = document.querySelector('input:not([type=hidden]):not([disabled]), textarea, [contenteditable="true"], [tabindex]:not([tabindex="-1"])');
-if(!el) return "noop";
-el.focus();
-try{ var v=(el.value||""); el.value=""; el.value=v; }catch(e){}
-return "focused";
-}
-// 初回 & 任意クリック後（入力以外を押した時のみ）
-focusFirst();
-document.addEventListener('click', function(ev){
-if(ev.target && ev.target.closest('input,textarea,[contenteditable="true"]')) return;
-setTimeout(focusFirst, 0);
-}, true);
-})();
-""".trimIndent()
+                // ▼ 最初の入力へ自動フォーカス（あなたの既存ロジックを残してOK）
+                val jsAutoFocus = """
+                    (function(){
+                      function focusFirst(){
+                        var el = document.querySelector('input:not([type=hidden]):not([disabled]), textarea, [contenteditable="true"], [tabindex]:not([tabindex="-1"])');
+                        if(!el) return "noop";
+                        el.focus();
+                        try{ var v=(el.value||""); el.value=""; el.value=v; }catch(e){}
+                        return "focused";
+                      }
+                      focusFirst();
+                      document.addEventListener('click', function(ev){
+                        if(ev.target && ev.target.closest('input,textarea,[contenteditable="true"]')) return;
+                        setTimeout(focusFirst, 0);
+                      }, true);
+                    })();
+                """.trimIndent()
                 binding.webView.evaluateJavascript(jsAutoFocus, null)
-                // ★ 端末側にスナップショットがあり、かつ localStorage が空なら差し戻して復元
-                pushSnapshotToWebIfMissing(binding.webView)
-                 }
-             }
 
+                // ★ 端末側スナップショット差し戻し（必要時のみ）
+                pushSnapshotToWebIfMissing(binding.webView)
+            }
+        }
+// koko v13 end
          // ★ 起動URLは strings.xml に一本化
          webView.loadUrl(getString(R.string.gas_url))
     }

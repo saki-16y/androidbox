@@ -35,12 +35,30 @@
             android:layout_height="40dp"/>
     </LinearLayout>
 
-    <!-- WebView（GAS画面を表示） -->
-    <WebView
-        android:id="@+id/webView"
+    <!-- ▼ C8：WebView と インジケータを重ねる -->
+    <FrameLayout
+        android:id="@+id/webContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"/>
+        android:layout_weight="1">
+
+        <WebView
+            android:id="@+id/webView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- 読み込み中インジケータ：初期は非表示 -->
+        <ProgressBar
+            android:id="@+id/progressBar"
+            style="?android:attr/progressBarStyleLarge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:indeterminate="true"
+            android:visibility="gone"
+            android:layout_gravity="center" />
+
+    </FrameLayout>
+
 
     <!-- Bottom 固定ボタンバー -->
     <LinearLayout
