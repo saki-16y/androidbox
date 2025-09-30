@@ -81,6 +81,16 @@
           display: flex; align-items: center; justify-content: center; overflow: hidden; }
         .wrap{ width: var(--labelW); height: var(--labelH); line-height:0; background:#fff; }
         .wrap svg{ width: var(--labelW); height: var(--labelH); display:block; background:#fff; }
+  /* ▼▼ ここから追加：単体表示（検品）オーバーレイ ▼▼ */
+  .inspect-overlay{ position:fixed; inset:0; background:#000; color:#fff; display:none; align-items:center; justify-content:center; z-index:9999; }
+  .inspect-overlay.show{ display:flex; }
+  .inspect-inner{ text-align:center; max-width:96vw; max-height:96vh; }
+  .inspect-svg{ display:block; margin:0 auto; background:#fff; border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.5); }
+  .inspect-svg svg{ width: min(95vw, calc(95vh * 1.495)); height:auto; display:block; }
+  .inspect-info{ margin-top:12px; font: 600 20px/1.35 system-ui, sans-serif; letter-spacing:.02em; }
+  .inspect-actions{ position:fixed; top:10px; left:10px; right:10px; display:flex; gap:8px; justify-content:space-between; pointer-events:auto; }
+  .inspect-actions button{ padding:8px 12px; font: 500 14px system-ui, sans-serif; border-radius:8px; border:1px solid #444; background:#111; color:#fff; cursor:pointer; }
+  /* ▲▲ ここまで追加 ▲▲ */
 
         @media print{ .toolbar{ display:none; } }
     </style>
@@ -101,6 +111,9 @@
     <button onclick="undo()">戻す</button>
     <button onclick="clearAll()">クリア</button>
     <button id="btnSettings" onclick="toggleSettings()">⚙ 設定</button>
+    <!-- ここから追加：検品モード切替 -->
+    <button id="btnInspect" onclick="toggleInspect()">検品モード</button>
+    <!-- ここまで追加 -->
 
     <!-- ▼ 設定パネル（必要項目を格納） -->
     <div id="settingsPanel" class="settings-panel" aria-hidden="true">
@@ -125,6 +138,18 @@
 </div>
 
 <div id="pages" class="pages"></div>
+<!-- ここから追加：単体表示（検品）オーバーレイ -->
+<div id="inspectOverlay" class="inspect-overlay" aria-hidden="true">
+    <div class="inspect-actions">
+        <button onclick="toggleInspect()">標準表示に戻る（Esc）</button>
+        <button onclick="showInspectCurrent()">最新を再表示</button>
+    </div>
+    <div class="inspect-inner">
+        <div id="inspectSvg" class="inspect-svg"></div>
+        <div id="inspectInfo" class="inspect-info"></div>
+    </div>
+</div>
+<!-- ここまで追加 -->
 
 <script>
     // ▼ 診断用：画面内のJSエラーを可視化（運用安定後は削除可）
@@ -250,6 +275,57 @@
   });
   window.addEventListener('beforeunload', saveState);
   // ★ ここまで追加
+/* ===== 検品モード（単体表示） ===== */
+let __inspectOn = false;
+let __lastJan = '';
+let __lastName = '';
+let __lastIndex = -1;
+
+function toggleInspect(){
+  setInspect(!__inspectOn);
+}
+function setInspect(on){
+  __inspectOn = !!on;
+  const ov = document.getElementById('inspectOverlay');
+  ov.classList.toggle('show', __inspectOn);
+  ov.setAttribute('aria-hidden', String(!__inspectOn));
+  const btn = document.getElementById('btnInspect');
+  if (btn) btn.textContent = __inspectOn ? '標準表示' : '検品モード';
+  if (__inspectOn) showInspectCurrent();
+}
+function showInspectCurrent(){
+  // 直近の枠を推定
+  let idx = (__lastIndex >= 0) ? __lastIndex : (cursor>0 ? (cursor-1) : -1);
+  let wrap = (idx >= 0) ? getWrapByIndex(idx) : null;
+
+  // 空要素なら後方検索
+  if (wrap && !wrap.innerHTML.trim()){
+    let i = idx;
+    wrap = null;
+    while(i >= 0){
+      const w = getWrapByIndex(i);
+      if (w && w.innerHTML.trim()){ wrap = w; idx = i; break; }
+      i--;
+    }
+  }
+  if (!wrap || !wrap.innerHTML.trim()){
+    toast('まだ表示できるラベルがありません');
+    setInspect(false);
+    return;
+  }
+  __lastIndex = idx;
+  const svgHTML = wrap.innerHTML;                 // 版面そのまま複製
+  document.getElementById('inspectSvg').innerHTML = svgHTML;
+  const info = document.getElementById('inspectInfo');
+  const jan = __lastJan || '(JAN 不明)';
+  const name = __lastName || '(商品名 不明)';
+  info.textContent = `JAN: ${jan}　/　${name}`;
+}
+// Escで閉じる・背景クリックで閉じる
+document.addEventListener('keydown', (e)=>{ if(__inspectOn && e.key==='Escape'){ setInspect(false); }});
+document.getElementById('inspectOverlay').addEventListener('click', (e)=>{
+  if (e.target.id === 'inspectOverlay') setInspect(false);
+});
 
   function updateStat(){
     const pageNo = Math.floor(cursor/48) + 1;
@@ -362,34 +438,59 @@
       }
     }
 
-    const after = () => {
-      const name = (dict && dict[key7]) || '';
-      if (!name) { alert('シートに該当コード（先頭7桁=' + key7 + '）が見つかりません'); return; }
+  const after = () => {
+    const name = (dict && dict[key7]) || '';
+    if (!name) { alert('シートに該当コード（先頭7桁=' + key7 + '）が見つかりません'); return; }
 
-      if (mode === 'one') {
-        const wrap = pages[0].querySelector('.sheet').querySelectorAll('.wrap')[0];
-        wrap.innerHTML = buildSVG_withAutoWrap(jan, name);
-      } else if (mode === 'all') {
-        // 現在ページの48枠に一括
-        ensurePageForCursor(); // 少なくとも1ページ
-        const wraps = pages[Math.floor(cursor/48)].querySelectorAll('.wrap');
-        wraps.forEach(w => w.innerHTML = buildSVG_withAutoWrap(jan, name));
-        cursor = Math.ceil((cursor+1)/48)*48; // そのページを満杯扱いに
-      } else {
-        // 順送り（左上→下→右）、48枚超えたら自動で次ページへ
-        const wrap = getWrapByIndex(cursor);
-        wrap.innerHTML = buildSVG_withAutoWrap(jan, name);
-        cursor++;
-        updateStat();
+    // ▼ 共通ターゲット（検品モードの最新参照に使う）
+    let wrapTarget = null;
+
+    if (mode === 'one') {
+      const wrap = pages[0].querySelector('.sheet').querySelectorAll('.wrap')[0];
+      wrap.innerHTML = buildSVG_withAutoWrap(jan, name);
+      wrapTarget = wrap;
+    } else if (mode === 'all') {
+      // 現在ページの48枠に一括
+      ensurePageForCursor(); // 少なくとも1ページ
+      const wraps = pages[Math.floor(cursor/48)].querySelectorAll('.wrap');
+      wraps.forEach(w => w.innerHTML = buildSVG_withAutoWrap(jan, name));
+      // ページを満杯扱い
+      cursor = Math.ceil((cursor+1)/48)*48;
+      wrapTarget = wraps[wraps.length - 1]; // 代表として最後の枠
+    } else {
+      // 順送り（左上→下→右）
+      const wrap = getWrapByIndex(cursor);
+      wrap.innerHTML = buildSVG_withAutoWrap(jan, name);
+      wrapTarget = wrap;
+      cursor++;
+      updateStat();
+    }
+
+    // ▼ 検品モードの「最新」情報を更新
+    __lastJan = jan;
+    __lastName = name;
+    __lastIndex = (function(){
+      try{
+        const sheet = wrapTarget.closest('.sheet');
+        const all   = sheet.querySelectorAll('.wrap');
+        const iIn   = Array.prototype.indexOf.call(all, wrapTarget);
+        const pIdx  = pages.indexOf(sheet.closest('.page'));
+        return (pIdx >= 0 && iIn >= 0) ? (pIdx * 48 + iIn) : (cursor > 0 ? cursor - 1 : 0);
+      }catch(_){
+        return (cursor > 0 ? cursor - 1 : 0);
       }
+    })();
 
-      // 連続スキャン向け：入力欄をクリアしてすぐ次へ
-      janInput.value = '';
-      janInput.focus();
-          // ★ 追加：状態を保存
-      saveState();
+    // 検品モード中なら単体表示を即時更新
+    if (__inspectOn) showInspectCurrent();
 
-    };
+    // 連続スキャン向け：入力欄をクリアしてすぐ次へ
+    janInput.value = '';
+    janInput.focus();
+    // 状態を保存
+    saveState();
+  };
+
 
     if (dict) return after();
     google.script.run.withSuccessHandler(m => { dict = m; after(); })
@@ -659,5 +760,38 @@
   createPage();
   updateStat();
 </script>
+<!-- ここから追加：ローカルプレビュー用モック（?local=1 で有効） -->
+<script>
+    (function(){
+      // URLに ?local=1 がある、または google.script.run が無いときだけ有効化
+      const isLocal = location.search.includes('local=1') || !(window.google && google.script && google.script.run);
+      if (!isLocal) return;
+
+      // サンプル辞書（先頭7桁→商品名）。自由に追加OK
+      const mockDict = {
+        "4901234":"テスト商品A",
+        "4905678":"テスト商品B",
+        "4510000":"テスト商品C"
+      };
+
+      // google.script.run を超簡易エミュレート（fetchDict だけ実装、その他はno-op）
+      window.google = window.google || {};
+      window.google.script = window.google.script || {};
+      const runner = {
+        _ok: null, _ng: null,
+        withSuccessHandler(fn){ this._ok = fn; return this; },
+        withFailureHandler(fn){ this._ng = fn; return this; },
+        fetchDict(){ setTimeout(()=> this._ok && this._ok(mockDict), 80); },
+        // 以降は呼ばれても無害なダミー
+        logSearchResult(){ return this; },
+        saveLog(){ return this; }
+      };
+      window.google.script.run = runner;
+
+      console.log("[LOCAL MOCK] enabled: index_v45.html?local=1");
+    })();
+</script>
+<!-- ここまで追加 -->
+
 </body>
 </html>
