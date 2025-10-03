@@ -4,7 +4,7 @@
     <string name="save_dummy_pdf">ダミーPDF保存</string>
     <string name="save_usb_from_webview">USBに保存</string>
     <string name="share_pdf">共有</string>
-    <string name="gas_url">https://script.google.com/macros/s/AKfycbzGYsKD-qZ1ryTEUS-ylEgWORrpTMG-SG4Yf47rVhxVVhubHIRB34sjfc6oEqKEERE/exec</string>
+    <string name="gas_url">https://script.google.com/macros/s/AKfycbywM2troor7OGwjBtLr8dEbY6t-l35BvXn6F-rdfolV_iEC-L8goGzxqHAj28F-TEhx1w/exec</string>
     // https://script.google.com/macros/s/AKfycbzaifuFk2Dyn2RXg4qe3Blfq-DbNfJ7NT1RNDb8C9duCDq6DTbAEEoIkuIdffDI-dI/exec
     <string name="change_folder">保存先を再設定</string>
 </resources>

@@ -114,6 +114,9 @@
     <!-- ここから追加：検品モード切替 -->
     <button id="btnInspect" onclick="toggleInspect()">検品モード</button>
     <!-- ここまで追加 -->
+    <!-- ここから追加：端末向け 入力フォーカス 20251002 ① -->
+    <button id="btnFocus" onclick="focusJan()">⌨ 入力</button>
+    <!-- ここまで追加 -->
 
     <!-- ▼ 設定パネル（必要項目を格納） -->
     <div id="settingsPanel" class="settings-panel" aria-hidden="true">
@@ -760,6 +763,55 @@ document.getElementById('inspectOverlay').addEventListener('click', (e)=>{
   createPage();
   updateStat();
 </script>
+<!-- ここから追加：端末入力の安定化（全角→半角・Enter処理・フォーカス維持） 20251002 ②-->
+<script>
+    (function(){
+      function toHalfWidthDigits(s){ return (s||'').replace(/[０-９]/g, c=> String.fromCharCode(c.charCodeAt(0)-0xFEE0)); }
+      function sanitizeJAN(s){
+        const half = toHalfWidthDigits(s).replace(/\D/g,'');
+        return half.length > 13 ? half.slice(0,13) : half;
+      }
+       function handleEnter(){
+        const el = document.getElementById('jan') || document.querySelector('input[type="text"]');
+        if (!el) return;
+        const jan13 = sanitizeJAN(el.value);
+        el.value = jan13;
+        // 13桁そろった時だけ実行
+        if (jan13.length === 13) {
+          try { scanAndFill('seq'); } catch(e) { console.warn(e); }
+        }
+      }
+
+      window.focusJan = function(){
+        const el = document.getElementById('jan') || document.querySelector('input[type="text"]');
+        if (!el) return;
+        // 端末でキーボードを確実に出すにはユーザー操作（このボタン）が有効
+        el.removeAttribute('readonly');
+        el.setAttribute('inputmode','numeric');
+
+
+        el.setAttribute('pattern','\\d*');
+        el.setAttribute('maxlength','13');
+        el.setAttribute('autocapitalize','off');
+        el.setAttribute('autocorrect','off');
+        el.focus({preventScroll:false});
+        setTimeout(()=>{ try{ el.scrollIntoView({block:'center'});}catch(_){}} , 50);
+      };
+      document.addEventListener('DOMContentLoaded', ()=>{
+        const el = document.getElementById('jan') || document.querySelector('input[type="text"]');
+        if (!el) return;
+        // 入力のたびに全角→半角・数字のみ・13桁制限（※scanAndFillは前半のtryAutoRun/keydownで実行される）
+        el.addEventListener('input', ()=>{
+          const pos = el.selectionStart;
+          el.value = sanitizeJAN(el.value);
+          try { el.setSelectionRange(pos,pos); } catch(_){}
+        });
+      });
+
+    })();
+</script>
+<!-- ここまで追加 -->
+
 <!-- ここから追加：ローカルプレビュー用モック（?local=1 で有効） -->
 <script>
     (function(){
