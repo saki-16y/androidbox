@@ -1,0 +1,985 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <title>JAN 48面（順送り・左上固定・自動改ページ）</title>
+    <style>
+        /* 印刷ダイアログ：A4 / 縮尺100% / 余白なし */
+        @page { size: A4 portrait; margin: 0; }
+
+        :root{
+          /* 左上固定のオフセット（A4内） */
+          --top: 19.2mm;
+          --left: 12.6mm;
+
+          /* セル・行列 */
+          --colW: 46.2mm;
+          --rowH: 21.55mm;
+          --cols: 4; --rows: 12;
+
+          /* シート寸法（微マージンで1ページ保証） */
+          --sheetW: calc(var(--colW) * var(--cols));   /* 184.8mm */
+          --sheetH: 258.50mm;                          /* 元258.60mmの -0.10mm */
+
+          /* ページ固定サイズ（A4） */
+          --pageW: 210mm; --pageH: 297mm;
+
+          /* ラベル本体（SVG） */
+          --labelW: 32.2mm;
+          --labelH: var(--rowH);
+        }
+
+        html, body { height: 100%; margin: 0;
+          -webkit-print-color-adjust: exact; print-color-adjust: exact; background:#fff; }
+
+        /* 複数ページをそのまま縦連結して印刷できるように */
+        .pages { background:#fff; }
+
+        .page{
+          width: var(--pageW); height: var(--pageH);
+          position: relative; background:#fff; overflow:hidden;
+          page-break-after: always;           /* 各ページごとに改ページ */
+          -webkit-region-break-after: always;
+        }
+        .page:last-child{ page-break-after: auto; }
+
+        .toolbar{
+          position: fixed; top: 6mm; left: 6mm; right: 6mm; z-index: 10;
+          display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+          background:#fff8; padding:4px 6px; border-radius:6px;
+          font-family: system-ui, sans-serif; font-size: 12px;
+        }
+        .toolbar input{
+          width: 36ch; padding:6px 8px;
+          ime-mode: disabled;                 /* IME抑止（対応ブラウザ） */
+        }
+        .toolbar button{ padding:6px 10px; border:1px solid #ddd; border-radius:6px; background:#fff; cursor:pointer; }
+        .toolbar .stat{ padding:0 6px; }
+        /* ▼ 追加：設定パネル（ギアから開閉） */
+        .settings-panel{
+          position: fixed; top: 14mm; right: 6mm; z-index: 20;
+          background:#fff; border:1px solid #ddd; border-radius:8px;
+          padding:8px; min-width:260px; box-shadow:0 8px 24px rgba(0,0,0,.15);
+          font-family: system-ui, sans-serif; font-size:12px; display:none;
+        }
+        .settings-panel.show{ display:block; }
+        .settings-panel .group{ margin:6px 0; padding-top:6px; border-top:1px solid #eee; }
+        .settings-panel button{ display:block; width:100%; text-align:left; margin:4px 0; }
+
+        .sheet{
+          position: absolute; left: var(--left); top: var(--top);
+          width: var(--sheetW); height: var(--sheetH);
+          display: grid;
+          grid-template-columns: repeat(var(--cols), var(--colW));
+          grid-template-rows:    repeat(var(--rows), var(--rowH));
+          grid-auto-flow: column;   /* ★ 上→下→右（縦優先） */
+          gap: 0; margin: 0; background:#fff;
+        }
+
+        .cell{ width: var(--colW); height: var(--rowH);
+          box-sizing: border-box; outline: 0.15mm solid #eee; /* ガイド（ON/OFF可） */
+          display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        .wrap{ width: var(--labelW); height: var(--labelH); line-height:0; background:#fff; }
+        .wrap svg{ width: var(--labelW); height: var(--labelH); display:block; background:#fff; }
+  /* ▼▼ ここから追加：単体表示（検品）オーバーレイ ▼▼ */
+  .inspect-overlay{ position:fixed; inset:0; background:#000; color:#fff; display:none; align-items:center; justify-content:center; z-index:9999; }
+  .inspect-overlay.show{ display:flex; }
+  .inspect-inner{ text-align:center; max-width:96vw; max-height:96vh; }
+  .inspect-svg{ display:block; margin:0 auto; background:#fff; border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.5); }
+  .inspect-svg svg{ width: min(95vw, calc(95vh * 1.495)); height:auto; display:block; }
+  .inspect-info{ margin-top:12px; font: 600 20px/1.35 system-ui, sans-serif; letter-spacing:.02em; }
+  .inspect-actions{ position:fixed; top:10px; left:10px; right:10px; display:flex; gap:8px; justify-content:space-between; pointer-events:auto; }
+  .inspect-actions button{ padding:8px 12px; font: 500 14px system-ui, sans-serif; border-radius:8px; border:1px solid #444; background:#111; color:#fff; cursor:pointer; }
+  /* ▲▲ ここまで追加 ▲▲ */
+
+        @media print{ .toolbar{ display:none; } }
+    </style>
+    <!-- ▼ PDF生成ライブラリ（ベクタのままSVG→PDF） -->
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.1/dist/svg2pdf.umd.min.js"></script>
+
+</head>
+<body>
+<div class="toolbar">
+    <input id="jan"
+           type="text"
+           inputmode="none" pattern="[0-9]*"
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+           placeholder="13桁JANをスキャン（Enter=順送り）">
+
+    <!-- ▼ 常時表示は最小：戻す／クリア／設定のみ -->
+    <button onclick="undo()">戻す</button>
+    <button onclick="clearAll()">クリア</button>
+    <button id="btnSettings" onclick="toggleSettings()">⚙ 設定</button>
+    <!-- ここから追加：検品モード切替 -->
+    <button id="btnInspect" onclick="toggleInspect()">検品モード</button>
+    <!-- ここまで追加 -->
+    <!-- ここから追加：端末向け 入力フォーカス 20251002 ① -->
+    <button id="btnFocus" onclick="focusJan()">⌨ 入力</button>
+    <!-- ここまで追加 -->
+
+    <!-- ▼ 設定パネル（必要項目を格納） -->
+    <div id="settingsPanel" class="settings-panel" aria-hidden="true">
+        <div class="group">
+            <strong>読取モード</strong>
+            <button onclick="scanAndFill('seq'); closeSettings()">読取→順送り</button>
+            <button onclick="scanAndFill('one'); closeSettings()">読取→左上1枚</button>
+        </div>
+        <div class="group">
+            <strong>表示/操作</strong>
+            <button onclick="toggleGuide(); closeSettings()">ガイド線 ON/OFF</button>
+            <button onclick="window.print(); closeSettings()">印刷</button>
+        </div>
+        <div class="group">
+            <strong>保存/設定</strong>
+            <button onclick="savePdfDrive(); closeSettings()">PDF保存（Drive）</button>
+            <button onclick="chooseDriveFolder(); closeSettings()">保存フォルダ設定</button>
+            <button onclick="chooseFont(); closeSettings()">フォント設定</button>
+        </div>
+    </div>
+    <span class="stat" id="stat">ページ: 1 / 1　ラベル数: 0 / 48</span>
+</div>
+
+<div id="pages" class="pages"></div>
+<!-- ここから追加：単体表示（検品）オーバーレイ -->
+<div id="inspectOverlay" class="inspect-overlay" aria-hidden="true">
+    <div class="inspect-actions">
+        <button onclick="toggleInspect()">標準表示に戻る（Esc）</button>
+        <button onclick="showInspectCurrent()">最新を再表示</button>
+    </div>
+    <div class="inspect-inner">
+        <div id="inspectSvg" class="inspect-svg"></div>
+        <div id="inspectInfo" class="inspect-info"></div>
+    </div>
+</div>
+<!-- ここまで追加 -->
+
+<script>
+    // ▼ 診断用：画面内のJSエラーを可視化（運用安定後は削除可）
+  window.addEventListener('error', e => alert('JSエラー: ' + e.message));
+  window.addEventListener('unhandledrejection', e =>
+    alert('Promiseエラー: ' + ((e.reason && e.reason.message) || e.reason || e)));
+  // ★ グローバル初期化（1回だけ）：重複宣言エラーと未定義参照を防止
+  window.__suppressFocusUntil = window.__suppressFocusUntil || 0;
+  window.__inspectOn = window.__inspectOn || false;
+  // 自動実行（スキャナ由来）かどうかのフラグ
+  window.__autoRun = false;
+
+  // IMEを確実に畳む（検品ON時など）
+  window.hideKeyboard = window.hideKeyboard || function(){
+    var el = document.getElementById('jan') || document.querySelector('input[type="text"]');
+    if (!el) return;
+    try{ el.blur(); }catch(_){}
+    el.setAttribute('readonly','readonly');
+    setTimeout(function(){ try{ el.removeAttribute('readonly'); }catch(_){} }, 250);
+  };
+
+  // 入力欄参照（宣言は1回・以後は再宣言しない）
+  window.janInput = window.janInput || document.getElementById('jan') || document.querySelector('input[type="text"]');
+
+  /* ===== 起動直後に即入力（フォーカス固定・連続スキャン向け） ===== */
+  // janInput は先頭で初期化済み（再宣言しない）
+  window.addEventListener('load', () => {
+
+    // ★ 起動時にローカル保存から復元してからフォーカス判定
+    try { restoreState(); } catch(_){}
+    if (!__inspectOn && Date.now() >= (__suppressFocusUntil||0)){
+      try{ janInput.focus({preventScroll:false}); }catch(_){ janInput.focus(); }
+    }
+  });
+  // ★ 起動後200msで再フォーカス（他スクリプトの影響を回避）
+  setTimeout(() => {
+    if (!__inspectOn && document.activeElement !== janInput){
+      try{ janInput.focus({preventScroll:false}); }catch(_){ janInput.focus(); }
+    }
+  }, 200);
+
+  // ▼ フォーカスが外れていても数字とEnter/Tabを拾って入力・実行
+  window.addEventListener('keydown', (e) => {
+    // 入力欄がアクティブでないとき、数字キーは取り込む
+    if (document.activeElement !== janInput && /^\d$/.test(e.key)) {
+      janInput.value = (janInput.value || '') + e.key;
+      tryAutoRun();                  // 13桁そろったら自動実行
+    }
+    // Enter / Tab は現在の値で即時判定（自動実行扱い）
+    if (document.activeElement !== janInput && (e.key === 'Enter' || e.key === 'Tab')) {
+      e.preventDefault();
+      const digits = (janInput.value || '').replace(/\D/g,'');
+      if (typeof autoTimer !== 'undefined' && autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+      if (digits.length >= 13) {
+        janInput.value = digits.slice(-13);
+        window.__autoRun = true;
+        try { scanAndFill('seq'); } finally { window.__autoRun = false; }
+      }
+      return;
+
+      scanAndFill('seq');
+    }
+  });
+
+  janInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === 'Tab') {
+     if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; } // ★二重発火防止
+      scanAndFill('seq');
+      e.preventDefault();
+    }
+
+
+  });
+
+  // ▼ 13桁そろったら自動実行（余分な文字は除去し、末尾13桁だけ使用）
+  let autoTimer = null;
+  function tryAutoRun(){
+    const digits = (janInput.value || '').replace(/\D/g, '');
+    if (digits.length >= 13){
+      clearTimeout(autoTimer);
+      autoTimer = setTimeout(() => {
+        janInput.value = digits.slice(-13);
+      window.__autoRun = true;
+      try { scanAndFill('seq'); } finally { window.__autoRun = false; }
+      }, 60);
+    }
+  }
+
+  janInput.addEventListener('input',  tryAutoRun);
+  janInput.addEventListener('change', tryAutoRun);
+  janInput.addEventListener('paste',  () => setTimeout(tryAutoRun, 10));
+
+  // ★ 追加：入力内容のデバウンス保存
+  let __saveTimer = null;
+  function __saveDebounced(){
+    if (__saveTimer) clearTimeout(__saveTimer);
+    __saveTimer = setTimeout(saveState, 200);
+  }
+  janInput.addEventListener('input', __saveDebounced);
+  janInput.addEventListener('change', saveState);
+
+  let dict = null;          // KEY7 → 商品名（シートから一度だけ取得）
+  let cursor = 0;           // 次に埋める“通し位置”（0..）
+  let pages = [];           // 追加した .page の配列
+  const pagesEl = document.getElementById('pages');
+  const statEl  = document.getElementById('stat');
+  // ▼ 追加：設定パネル開閉（クリック外／Escで閉じる）
+  const settings = document.getElementById('settingsPanel');
+  function toggleSettings(){
+    const show = !settings.classList.contains('show');
+    settings.classList.toggle('show', show);
+    settings.setAttribute('aria-hidden', String(!show));
+  }
+  function closeSettings(){
+    settings.classList.remove('show');
+    settings.setAttribute('aria-hidden', 'true');
+  }
+  document.addEventListener('click', (e)=>{
+    const btn = document.getElementById('btnSettings');
+    if (!settings.classList.contains('show')) return;
+    if (settings.contains(e.target) || btn.contains(e.target)) return;
+    closeSettings();
+  });
+  document.addEventListener('keydown', (e)=>{ if (e.key==='Escape') closeSettings(); });
+
+  // ★ ここから追加：ページ状態の保存/復元
+  const LS_KEY = 'jan48.state.v1';
+
+  function saveState(){
+    try{
+      const state = {
+        cursor,
+        pagesHTML: pagesEl.innerHTML,
+        jan: janInput.value
+      };
+      localStorage.setItem(LS_KEY, JSON.stringify(state));
+    }catch(_){}
+  }
+
+  function restoreState(){
+    try{
+      const raw = localStorage.getItem(LS_KEY);
+      if (!raw) return;
+      const st = JSON.parse(raw);
+      if (st.pagesHTML){
+        pagesEl.innerHTML = st.pagesHTML;
+        pages = Array.from(document.querySelectorAll('.page'));
+      }
+      cursor = st.cursor || 0;
+      if (st.jan) janInput.value = st.jan;
+      updateStat();
+    }catch(_){}
+  }
+
+  // バックグラウンド遷移/終了前にも保存
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) saveState();
+  });
+  window.addEventListener('beforeunload', saveState);
+  // ★ ここまで追加
+
+    let __lastJan = '';
+    let __lastName = '';
+    let __lastIndex = -1;
+
+function toggleInspect(){
+  setInspect(!__inspectOn);
+}
+function setInspect(on){
+  __inspectOn = !!on;
+  const ov = document.getElementById('inspectOverlay');
+
+  if (__inspectOn){
+    // 検品ON：キーボードを畳み、しばらく自動フォーカスを抑制
+    hideKeyboard();
+    __suppressFocusUntil = Date.now() + 1500;
+  }else{
+    // 検品OFF直後もしばらく自動フォーカスを抑制（不要な再ポップアップ防止）
+    __suppressFocusUntil = Date.now() + 1200;
+  }
+
+  ov.classList.toggle('show', __inspectOn);
+  ov.setAttribute('aria-hidden', String(!__inspectOn));
+  const btn = document.getElementById('btnInspect');
+  if (btn) btn.textContent = __inspectOn ? '標準表示' : '検品モード';
+  if (__inspectOn) showInspectCurrent();
+}
+function showInspectCurrent(){
+  // 直近の枠を推定
+  let idx = (__lastIndex >= 0) ? __lastIndex : (cursor>0 ? (cursor-1) : -1);
+  let wrap = (idx >= 0) ? getWrapByIndex(idx) : null;
+
+  // 空要素なら後方検索
+  if (wrap && !wrap.innerHTML.trim()){
+    let i = idx;
+    wrap = null;
+    while(i >= 0){
+      const w = getWrapByIndex(i);
+      if (w && w.innerHTML.trim()){ wrap = w; idx = i; break; }
+      i--;
+    }
+  }
+  if (!wrap || !wrap.innerHTML.trim()){
+    toast('まだ表示できるラベルがありません');
+    setInspect(false);
+    return;
+  }
+  __lastIndex = idx;
+  const svgHTML = wrap.innerHTML;                 // 版面そのまま複製
+  document.getElementById('inspectSvg').innerHTML = svgHTML;
+  const info = document.getElementById('inspectInfo');
+  const jan = __lastJan || '(JAN 不明)';
+  const name = __lastName || '(商品名 不明)';
+  info.textContent = `JAN: ${jan}　/　${name}`;
+}
+// Escで閉じる・背景クリックで閉じる
+document.addEventListener('keydown', (e)=>{ if(__inspectOn && e.key==='Escape'){ setInspect(false); }});
+document.getElementById('inspectOverlay').addEventListener('click', (e)=>{
+  if (e.target.id === 'inspectOverlay') setInspect(false);
+});
+
+  function updateStat(){
+    const pageNo = Math.floor(cursor/48) + 1;
+    const pos    = (cursor % 48) + 1;
+    statEl.textContent = `ページ: ${pageNo} / ${pages.length}　ラベル数: ${pos-1} / 48`;
+  }
+
+  function createPage(){
+    const page = document.createElement('div');
+    page.className = 'page';
+    const sheet = document.createElement('div');
+    sheet.className = 'sheet';
+    sheet.innerHTML = new Array(48).fill('<div class="cell"><div class="wrap"></div></div>').join('');
+    page.appendChild(sheet);
+    pagesEl.appendChild(page);
+    pages.push(page);
+    updateStat();
+    return page;
+  }
+  function ensurePageForCursor(){
+    const need = Math.floor(cursor/48) + 1;
+    while (pages.length < need) createPage();
+  }
+  function getWrapByIndex(n){
+    ensurePageForCursor();
+    const pIdx = Math.floor(n/48);
+    const iIn  = n % 48;
+    const sheet = pages[pIdx].querySelector('.sheet');
+    return sheet.querySelectorAll('.wrap')[iIn];
+  }
+
+  function toggleGuide(){
+    document.querySelectorAll('.cell').forEach(c=>{
+      c.style.outline = (c.style.outline==='none') ? '0.15mm solid #eee' : 'none';
+    });
+  }
+    function clearAll(){
+    pagesEl.innerHTML = '';
+    pages = [];
+    cursor = 0;
+    createPage();
+      // ★ 追加：状態を保存（空のページ/カーソルを反映）
+    saveState();
+
+    janInput.value = '';
+    if (!__inspectOn && Date.now() >= (__suppressFocusUntil||0)){
+      try{ janInput.focus({preventScroll:false}); }catch(_){ janInput.focus(); }
+    }
+  }
+
+  function undo(){
+    if (cursor <= 0) return;
+    cursor--;
+    const wrap = getWrapByIndex(cursor);
+    wrap.innerHTML = '';
+    updateStat();
+      // ★ 追加：状態を保存
+    saveState();
+
+  }
+
+  /* ===== スキャン→検索→描画 ===== */
+  // ===== EAN-13 チェック桁 & エンコード（未定義対策） =====
+  function checkEAN13(j){
+    j = String(j||'').replace(/\D/g,'');
+    if (j.length !== 13) return false;
+    const a = j.split('').map(n=>+n);
+    const cd = a.pop();
+    const sum = a.reduce((t,n,i)=> t + n * (i%2 ? 3 : 1), 0);
+    return ((10 - (sum % 10)) % 10) === cd;
+  }
+
+  function encodeEAN13(j){
+    const L=['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+    const G=['0100111','0110011','0011011','0100001','0011101','0111001','0000101','0010001','0001001','0010111'];
+    const R=['1110010','1100110','1101100','1000010','1011100','1001110','1010000','1000100','1001000','1110100'];
+    const PAR=['LLLLLL','LLGLGG','LLGGLG','LLGGGL','LGLLGG','LGGLLG','LGGGLL','LGLGLG','LGLGGL','LGGLGL'];
+    const d=String(j||'').replace(/\D/g,'').split('').map(Number);
+    const f=d[0], left=d.slice(1,7), right=d.slice(7,13);
+    let bits=''; const QL=11, QR=7;
+    bits+='0'.repeat(QL);       // 左静寂域
+    bits+='101';                // レフトガード
+    const p=PAR[f];
+    for(let i=0;i<6;i++) bits += (p[i]==='L'?L:G)[left[i]];
+    bits+='01010';              // センターガード
+    for(let i=0;i<6;i++) bits += R[right[i]];
+    bits+='101';                // ライトガード
+    bits+='0'.repeat(QR);       // 右静寂域
+    return bits;
+  }
+
+  function scanAndFill(mode='seq'){
+    const jan = (janInput.value || '').replace(/\D/g,'');
+
+   // ★二重発火ガード：直近500ms以内に同じJANが来たら無視
+   const now = Date.now();
+   window.__lastScan = { val: jan, ts: now };
+
+  if (!/^\d{13}$/.test(jan)) {
+    if (window.__autoRun) return; // ← 自動実行中はアラートを出さない
+    alert('13桁のJANを入力してください');
+    try{ janInput.focus({preventScroll:false}); }catch(_){ janInput.focus(); }
+    return;
+  }
+    const key7 = jan.slice(0,7);
+
+    const ok = checkEAN13(jan);
+    // ▼ 不一致なら：エラー音＋音声 → 登録するかユーザーに確認
+    if (!ok) {
+      beepError();
+      speakJP('コードが、不正です');
+      if (!confirm('検査数字が不一致です。\nこのまま登録しますか？（OK=登録／キャンセル=中止）')) {
+        janInput.select();
+        return;
+      }
+    }
+
+  const after = () => {
+    const name = (dict && dict[key7]) || '';
+    if (!name) { alert('シートに該当コード（先頭7桁=' + key7 + '）が見つかりません'); return; }
+
+    // ▼ 共通ターゲット（検品モードの最新参照に使う）
+    let wrapTarget = null;
+
+    if (mode === 'one') {
+      const wrap = pages[0].querySelector('.sheet').querySelectorAll('.wrap')[0];
+      wrap.innerHTML = buildSVG_withAutoWrap(jan, name);
+      wrapTarget = wrap;
+    } else if (mode === 'all') {
+      // 現在ページの48枠に一括
+      ensurePageForCursor(); // 少なくとも1ページ
+      const wraps = pages[Math.floor(cursor/48)].querySelectorAll('.wrap');
+      wraps.forEach(w => w.innerHTML = buildSVG_withAutoWrap(jan, name));
+      // ページを満杯扱い
+      cursor = Math.ceil((cursor+1)/48)*48;
+      wrapTarget = wraps[wraps.length - 1]; // 代表として最後の枠
+    } else {
+      // 順送り（左上→下→右）
+      const wrap = getWrapByIndex(cursor);
+      wrap.innerHTML = buildSVG_withAutoWrap(jan, name);
+      wrapTarget = wrap;
+      cursor++;
+      updateStat();
+    }
+
+    // ▼ 検品モードの「最新」情報を更新
+    __lastJan = jan;
+    __lastName = name;
+    __lastIndex = (function(){
+      try{
+        const sheet = wrapTarget.closest('.sheet');
+        const all   = sheet.querySelectorAll('.wrap');
+        const iIn   = Array.prototype.indexOf.call(all, wrapTarget);
+        const pIdx  = pages.indexOf(sheet.closest('.page'));
+        return (pIdx >= 0 && iIn >= 0) ? (pIdx * 48 + iIn) : (cursor > 0 ? cursor - 1 : 0);
+      }catch(_){
+        return (cursor > 0 ? cursor - 1 : 0);
+      }
+    })();
+    // 連続スキャン向け：入力欄を明示的にクリア
+    janInput.value = '';
+    // 検品モード中なら単体表示を即時更新（DOM反映後）
+    if (__inspectOn) setTimeout(showInspectCurrent, 0);
+    // 連続スキャン向け：入力欄を明示的にクリア
+    janInput.value = '';
+
+    if (!__inspectOn && Date.now() >= (__suppressFocusUntil||0)){
+      try{ janInput.focus({preventScroll:false}); }catch(_){ janInput.focus(); }
+    }
+
+    // 状態を保存
+    saveState();
+  };
+
+
+    if (dict) return after();
+    google.script.run.withSuccessHandler(m => { dict = m; after(); })
+                     .withFailureHandler(err => alert(err.message || err))
+                     .fetchDict();
+  }
+
+  /* ================== 実幅(mm)ベースの2行自動折返し ================== */
+  let measurer = null;
+  function getMeasurer(){
+    if (measurer) return measurer;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('width','32.2mm');
+    svg.setAttribute('height','21.55mm');
+    svg.setAttribute('viewBox','0 0 32.2 21.55');
+    svg.style.position = 'absolute';
+    svg.style.left = '-1000mm';
+    svg.style.top  = '-1000mm';
+    svg.style.visibility = 'hidden';
+    const text = document.createElementNS(svg.namespaceURI,'text');
+    text.setAttribute('y','0');
+    svg.appendChild(text);
+    document.body.appendChild(svg);
+    measurer = {
+      svg, text,
+      width(str, fontSize){
+        text.setAttribute('font-size', String(fontSize));
+        text.textContent = str || '';
+        return text.getComputedTextLength();
+      }
+    };
+    return measurer;
+  }
+  function wrapNameToTwoLines(name, maxWidthMM, baseFont=2.0, minFont=1.6){
+    const M = getMeasurer();
+    function fitFirstLine(s){
+      let lo=0, hi=s.length, best=0;
+      while (lo<=hi){
+        const mid = Math.floor((lo+hi)/2);
+        const w = M.width(s.slice(0,mid), baseFont);
+        if (w <= maxWidthMM){ best=mid; lo=mid+1; } else { hi=mid-1; }
+      }
+      return best;
+    }
+    const s = String(name || '');
+    let cut = fitFirstLine(s);
+    let line1 = s.slice(0, cut);
+    let line2 = s.slice(cut);
+
+    const w1 = M.width(line1, baseFont);
+    const w2 = M.width(line2, baseFont);
+    let scale = 1;
+    if (w1 > maxWidthMM || w2 > maxWidthMM){
+      const s1 = line1 ? (maxWidthMM / Math.max(w1, 0.001)) : 1;
+      const s2 = line2 ? (maxWidthMM / Math.max(w2, 0.001)) : 1;
+      scale = Math.min(s1, s2, 1);
+    }
+    let font = Math.max(minFont, baseFont * scale);
+
+    if (line2){
+      let w = M.width(line2, font);
+      if (w > maxWidthMM){
+        let lo=0, hi=line2.length, best=0;
+        while (lo<=hi){
+          const mid = Math.floor((lo+hi)/2);
+          const w2m = M.width(line2.slice(0,mid)+'…', font);
+          if (w2m <= maxWidthMM){ best=mid; lo=mid+1; } else { hi=mid-1; }
+        }
+        line2 = line2.slice(0, best) + '…';
+      }
+    }
+    return { line1, line2, font };
+  }
+
+  /* =============== 1面SVG（等倍1:1・白地・自動折返し） =============== */
+  function buildSVG_withAutoWrap(jan, name){
+    const X=0.264, QL=11, QR=7, TOTAL=(95+QL+QR)*X, labelW=32.2;
+    const offset=(labelW-TOTAL)/2;
+    const yTop=0.575, hN=11.5, hG=13.5;
+
+    // 商品名：左2mm、右1.5mm の内側に収める
+    const nameX = offset + 2.0;
+    const nameMaxW = labelW - nameX - 1.5;
+
+    const pat = encodeEAN13(jan);
+    const Ls=QL, Le=QL+3, Cs=QL+3+42, Ce=Cs+5, Rs=Ce+42, Re=Rs+3;
+
+    let rects=''; let i=0;
+    while(i<pat.length){
+      if(pat[i]==='1'){
+        let j=i+1; while(j<pat.length && pat[j]==='1') j++;
+        const x=offset + i*X, w=(j-i)*X;
+        const isGuard = (i<Le&&j>Ls)||(i<Ce&&j>Cs)||(i<Re&&j>Rs);
+        rects += `<rect x="${x.toFixed(3)}" y="${yTop}" width="${w.toFixed(3)}" height="${isGuard?hG:hN}" />\n`;
+        i=j;
+      } else i++;
+    }
+
+    const d=jan.split(''); const first=d[0], left6=d.slice(1,7).join(''), right6=d.slice(7).join('');
+    const leftStartX=offset+(QL+3)*X, rightStartX=offset+(QL+3+42+5)*X;
+    const leftMid=leftStartX+(42*X)/2, rightMid=rightStartX+(42*X)/2;
+    const firstX=offset+(QL-7)*X;
+
+    const { line1, line2, font } = wrapNameToTwoLines(name, nameMaxW, 2.0, 1.6);
+
+    const text = `
+      <text x="${firstX.toFixed(3)}" y="14.675" font-size="3.6" font-family="JP" text-anchor="middle">${first}</text>
+      <text x="${leftMid.toFixed(3)}"  y="14.675" font-size="3.2" font-family="JP" text-anchor="middle">${left6}</text>
+      <text x="${rightMid.toFixed(3)}" y="14.675" font-size="3.2" font-family="JP" text-anchor="middle">${right6}</text>
+      <text x="${nameX.toFixed(3)}" y="17.325" font-size="${font.toFixed(2)}" font-family="JP">${line1||''}</text>
+      <text x="${nameX.toFixed(3)}" y="19.375" font-size="${font.toFixed(2)}" font-family="JP">${line2||''}</text>
+      `;
+
+
+      return `<svg width="32.2mm" height="21.55mm" viewBox="0 0 32.2 21.55"
+         xmlns="http://www.w3.org/2000/svg" style="background:#ffffff">
+      <rect x="0" y="0" width="32.2" height="21.55" fill="#ffffff" fill-opacity="1"/>
+      <rect x="0" y="0" width="32.2" height="21.55" fill="none" stroke="#eeeeee" stroke-width="0.15"/>
+      ${rects}${text}
+    </svg>`;
+  }
+
+  /* =============== EAN-13（既存どおり） =============== */
+  /* ===== ▼ PDF保存（Drive）用ユーティリティ ===== */
+
+  /* mm↔px 換算（DOM座標→mm） */
+  let __pxPerMm;
+  function pxPerMm(){
+    if (__pxPerMm) return __pxPerMm;
+    const d=document.createElement('div');
+    d.style.position='absolute'; d.style.left='-1000mm'; d.style.top='-1000mm';
+    d.style.width='1mm'; d.style.height='1mm'; document.body.appendChild(d);
+    __pxPerMm = d.getBoundingClientRect().width; d.remove(); return __pxPerMm;
+  }
+
+  /* 画面の .page 内の SVG をベクタのままPDF化（A4縦） */
+  // ▼ 日本語フォントを jsPDF に登録（1回だけ）
+  let __jpFontReady = false;
+  async function ensureJPFont(pdf){
+    if (__jpFontReady){ pdf.setFont('JP', 'normal'); return; }
+    const b64 = await new Promise((ok, ng)=>{
+      google.script.run.withSuccessHandler(ok).withFailureHandler(ng).getFontBase64();
+    });
+    // Drive から取った Base64 をVFSへ登録 → フォント名 'JP' で使用
+    pdf.addFileToVFS('JP.ttf', b64);
+    pdf.addFont('JP.ttf', 'JP', 'normal');
+    pdf.setFont('JP', 'normal');
+    __jpFontReady = true;
+  }
+
+  async function buildPdfBlob(){
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit:'mm', format:'a4', orientation:'portrait' });
+      await ensureJPFont(pdf);                      // ★ここで日本語フォントをセット
+      const pages = document.querySelectorAll('.page');
+    for (let p=0; p<pages.length; p++){
+      if (p>0) pdf.addPage('a4','portrait');
+      const pageEl = pages[p];
+      const pageRect = pageEl.getBoundingClientRect();
+      const ppm = pxPerMm();
+      const svgs = pageEl.querySelectorAll('svg');
+      for (const svg of svgs){
+        const r = svg.getBoundingClientRect();
+        const x = (r.left - pageRect.left) / ppm;
+        const y = (r.top  - pageRect.top ) / ppm;
+        const w =  r.width / ppm;
+        const h =  r.height/ ppm;
+        // 互換ラッパー経由で svg2pdf を呼ぶ
+        const fn = (window.svg2pdf && (window.svg2pdf.svg2pdf || window.svg2pdf.default)) || window.svg2pdf;
+        await fn(svg, pdf, { x, y, width: w, height: h });
+      }
+    }
+    return pdf.output('blob');
+  }
+
+  /* Blob→Base64（google.script.run で送るため） */
+  async function blobToBase64(blob){
+    const buf = await blob.arrayBuffer();
+    let bin = '', bytes = new Uint8Array(buf), step = 0x8000;
+    for (let i=0;i<bytes.length;i+=step){
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i+step));
+    }
+    return btoa(bin);
+  }
+
+  /* ファイル名（日時入り） */
+  function timestampName(prefix='JAN'){
+    const d=new Date(), z=n=>String(n).padStart(2,'0');
+    return `${prefix}_${d.getFullYear()}${z(d.getMonth()+1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.pdf`;
+  }
+
+  /* 保存先フォルダ設定（フォルダURLまたはIDを貼付→ID抽出→GASへ保存） */
+  function chooseDriveFolder(){
+    const raw = prompt('保存先のGoogleドライブ「フォルダURL」または「フォルダID」を入力してください。\n例）https://drive.google.com/drive/folders/XXXXXXXX\n　　または 直接 ID（XXXXXXXX）');
+    if (!raw) return;
+    const idMatch = String(raw).match(/[-\w]{25,}/);
+    if (!idMatch) { alert('フォルダIDが抽出できませんでした'); return; }
+    const folderId = idMatch[0];
+    google.script.run
+      .withSuccessHandler(()=>toast('保存フォルダを登録しました'))
+      .withFailureHandler(err=>alert(err.message||err))
+      .setSaveFolderId(folderId);
+  }
+  function chooseFont(){
+    const raw = prompt('日本語フォント(TTF/OTF)の「ファイルID」またはURLを入力してください。\n例：https://drive.google.com/file/d/XXXXXXXX/view?usp=sharing');
+    if (!raw) return;
+    const m = String(raw).match(/[-\w]{25,}/);
+    if (!m){ alert('ファイルIDを抽出できませんでした'); return; }
+    const id = m[0];
+    google.script.run
+      .withSuccessHandler(()=>toast('フォントを登録しました'))
+      .withFailureHandler(err=>alert(err.message||err))
+      .setFontFileId(id);
+  }
+
+  /* Driveへ保存（サーバ側へBase64送信→保存URL受領→トースト表示） */
+  async function savePdfDrive(){
+    try{
+      const blob = await buildPdfBlob();
+      const b64  = await blobToBase64(blob);
+      const name = timestampName();
+
+      google.script.run
+        .withSuccessHandler(url => toast(`Driveに保存しました<br><a href="${url}" target="_blank">開く</a>`))
+        .withFailureHandler(err => alert(err.message||err))
+        .savePdfToDrive(b64, name);
+
+    }catch(err){
+      alert('PDF保存エラー：' + (err.message||err));
+    }
+  }
+
+  /* かんたんトースト */
+  function toast(html){
+    let t = document.getElementById('toast');
+    if (!t){
+      t = document.createElement('div');
+      t.id='toast';
+      t.style.cssText='position:fixed;right:12px;bottom:12px;background:#323232;color:#fff;padding:10px 14px;border-radius:8px;font:12px system-ui;z-index:9999;max-width:70vw;box-shadow:0 2px 8px rgba(0,0,0,.25)';
+      document.body.appendChild(t);
+    }
+    t.innerHTML = html;
+    t.style.opacity='1';
+    clearTimeout(t.__to);
+    t.__to = setTimeout(()=>{ t.style.transition='opacity .5s'; t.style.opacity='0'; }, 3500);
+  }
+  // ▼ エラー時のビープ音（短い2音）
+  function beepError(){
+    try{
+      const ac = new (window.AudioContext||window.webkitAudioContext)();
+      const beep = (f, t, g=0.1)=>{ const o=ac.createOscillator(), v=ac.createGain();
+        o.type='square'; o.frequency.value=f; v.gain.value=g; o.connect(v); v.connect(ac.destination);
+        o.start(); o.stop(ac.currentTime+t);
+      };
+      beep(880, 0.08); setTimeout(()=>beep(660, 0.10), 120);
+    }catch(_){}
+  }
+  // ▼ 日本語音声案内（端末が未対応なら何もしない）
+  function speakJP(text){
+    try{
+      const u = new SpeechSynthesisUtterance(text); u.lang='ja-JP'; u.rate=1.1;
+      window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
+    }catch(_){}
+  }
+
+  /* 初期ページを1枚作成 */
+  createPage();
+  updateStat();
+</script>
+<!-- ここから追加：端末入力の安定化（全角→半角・Enter処理・フォーカス維持） 20251002 ②-->
+<script>
+    (function(){
+      function toHalfWidthDigits(s){ return (s||'').replace(/[０-９]/g, c=> String.fromCharCode(c.charCodeAt(0)-0xFEE0)); }
+      function sanitizeJAN(s){
+        const half = toHalfWidthDigits(s).replace(/\D/g,'');
+        return half.length > 13 ? half.slice(0,13) : half;
+      }
+       function handleEnter(){
+        const el = document.getElementById('jan') || document.querySelector('input[type="text"]');
+        if (!el) return;
+        const jan13 = sanitizeJAN(el.value);
+        el.value = jan13;
+        // 13桁そろった時だけ実行
+        if (jan13.length === 13) {
+          try { scanAndFill('seq'); } catch(e) { console.warn(e); }
+        }
+      }
+
+      window.focusJan = function(){
+        const el = document.getElementById('jan') || document.querySelector('input[type="text"]');
+        if (!el) return;
+        // 端末でキーボードを確実に出すにはユーザー操作（このボタン）が有効
+        el.removeAttribute('readonly');
+        el.setAttribute('inputmode','numeric');
+
+
+        el.setAttribute('pattern','\\d*');
+        el.setAttribute('maxlength','13');
+        el.setAttribute('autocapitalize','off');
+        el.setAttribute('autocorrect','off');
+        el.focus({preventScroll:false});
+        setTimeout(()=>{ try{ el.scrollIntoView({block:'center'});}catch(_){}} , 50);
+      };
+      document.addEventListener('DOMContentLoaded', ()=>{
+        const el = document.getElementById('jan') || document.querySelector('input[type="text"]');
+        if (!el) return;
+        // 入力のたびに全角→半角・数字のみ・13桁制限（※scanAndFillは前半のtryAutoRun/keydownで実行される）
+        el.addEventListener('input', ()=>{
+          const pos = el.selectionStart;
+          el.value = sanitizeJAN(el.value);
+          try { el.setSelectionRange(pos,pos); } catch(_){}
+        });
+      });
+
+    })();
+</script>
+<!-- ここまで追加 -->
+
+<!-- ここから追加：ローカルプレビュー用モック（?local=1 で有効） -->
+<script>
+    (function(){
+      // URLに ?local=1 がある、または google.script.run が無いときだけ有効化
+      const isLocal = location.search.includes('local=1') || !(window.google && google.script && google.script.run);
+      if (!isLocal) return;
+
+      // サンプル辞書（先頭7桁→商品名）。自由に追加OK
+      const mockDict = {
+        "4901234":"テスト商品A",
+        "4905678":"テスト商品B",
+        "4510000":"テスト商品C"
+      };
+
+      // google.script.run を超簡易エミュレート（fetchDict だけ実装、その他はno-op）
+      window.google = window.google || {};
+      window.google.script = window.google.script || {};
+      const runner = {
+        _ok: null, _ng: null,
+        withSuccessHandler(fn){ this._ok = fn; return this; },
+        withFailureHandler(fn){ this._ng = fn; return this; },
+        fetchDict(){ setTimeout(()=> this._ok && this._ok(mockDict), 80); },
+        // 以降は呼ばれても無害なダミー
+        logSearchResult(){ return this; },
+        saveLog(){ return this; }
+      };
+      window.google.script.run = runner;
+
+      console.log("[LOCAL MOCK] enabled: index.html?local=1");
+    })();
+</script>
+<!-- ここまで追加 -->
+<script>
+    /* Android/Chrome のフォーム自動復元対策：表示ごとに入力欄をクリア */
+    (function v5ClearOnShow(){
+      window.addEventListener('pageshow', function(){
+        var el = document.getElementById('jan') || document.querySelector('input[type="text"]');
+        if (el) { el.value = ''; }
+      });
+    })();
+</script>
+<script>
+    /* Android 14 の IME 合成と競合しないスキャナ処理（数字キーを自前で受ける） */
+    (function v5ScanBuffer(){
+      var buf = '';
+      var timer = null;
+      var FLUSH_MS = 80; // 入力が止まってから確定
+
+      function flush(){
+        var el = document.getElementById('jan') || document.querySelector('input[type="text"]');
+        if (!el) return;
+    var val = buf.replace(/\D/g,'');
+    buf = '';
+    el.value = val;
+    if (val.length === 13) {
+     window.__autoRun = true;
+     try { scanAndFill('seq'); } catch(e){ console.warn(e); }
+     finally { window.__autoRun = false; }
+    }
+
+      }
+
+  document.addEventListener('keydown', function(e){
+    var el = document.getElementById('jan') || document.querySelector('input[type="text"]');
+    if (!el || document.activeElement !== el) return;
+    if (e.isComposing) return;                 // 合成中は触らない
+
+
+        if (/^[0-9]$/.test(e.key)) {
+          e.preventDefault();                      // 既定の input 発火を止める
+            // 手入力でゆっくりタイプされたとき、前回flush後の値を引き継ぐ
+            if (buf === '') {
+              var existing = (el.value || '').replace(/\D/g,'');
+              if (existing) buf = existing;
+            }
+            buf += e.key;
+          clearTimeout(timer);
+          timer = setTimeout(flush, FLUSH_MS);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          flush();
+        } else if (e.key === 'Backspace') {
+          e.preventDefault();
+          buf = buf.slice(0, -1);
+          el.value = buf;
+        }
+      });
+    })();
+</script>
+<script>
+    /* 入力欄の属性を端末向けに最適化（IMEの過干渉・6桁化を防ぐ） */
+    document.addEventListener('DOMContentLoaded', function(){
+      var el = document.getElementById('jan') || document.querySelector('input[type="text"]');
+      if (!el) return;
+      el.setAttribute('inputmode','numeric');
+      el.setAttribute('pattern','\\d*');
+      el.setAttribute('maxlength','13');
+      el.setAttribute('autocapitalize','off');
+      el.setAttribute('autocorrect','off');
+      el.setAttribute('autocomplete','off');      // ※ one-time-code は使わない
+      el.setAttribute('spellcheck','false');
+    });
+</script>
+<script>
+    /* フォーカスガード：抑制期間中に #jan がフォーカスされたら即座に外す */
+    (function v5FocusGuard(){
+      document.addEventListener('focusin', function(e){
+        var el = document.getElementById('jan') || document.querySelector('input[type="text"]');
+        if (!el) return;
+        if (e.target === el && Date.now() < (__suppressFocusUntil||0)) {
+          try{ el.blur(); }catch(_){}
+        }
+      }, true);
+    })();
+</script>
+
+</body>
+</html>
